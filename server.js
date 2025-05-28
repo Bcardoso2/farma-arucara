@@ -17,11 +17,29 @@ app.use(express.json());
 // Testar conexão com o banco de dados
 testConnection();
 
-// Sincronizar modelos com o banco de dados
-// Em produção, use migrations ao invés de sync
-sequelize.sync({ alter: true }).then(() => {
-  console.log('Modelos sincronizados com o banco de dados');
-});
+// ✅ SINCRONIZAÇÃO SEGURA - Evita criação de índices duplicados
+async function initializeDatabase() {
+  try {
+    if (process.env.NODE_ENV === 'production') {
+      // Em produção: apenas conectar, não alterar estrutura
+      await sequelize.authenticate();
+      console.log('✅ Conectado ao banco de dados (produção)');
+    } else {
+      // Em desenvolvimento: sync mais controlado
+      await sequelize.sync({ 
+        alter: false, // ❌ MUDANÇA: não alterar estrutura automaticamente
+        force: false  // ❌ não recriar tabelas
+      });
+      console.log('✅ Modelos sincronizados com o banco de dados (desenvolvimento)');
+    }
+  } catch (error) {
+    console.error('❌ Erro na sincronização do banco:', error);
+    process.exit(1);
+  }
+}
+
+// Inicializar banco
+initializeDatabase();
 
 // Rotas de autenticação
 app.use('/api/auth', require('./routes/authRoutes'));
@@ -43,5 +61,5 @@ app.get('/', (req, res) => {
 const PORT = process.env.PORT || 3001;
 
 app.listen(PORT, () => {
-  console.log(`Servidor rodando na porta ${PORT}`);
+  console.log(`🚀 Servidor rodando na porta ${PORT}`);
 });

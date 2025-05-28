@@ -1,4 +1,3 @@
- 
 const { DataTypes } = require('sequelize');
 const { sequelize } = require('../config/db');
 
@@ -9,8 +8,8 @@ const Client = sequelize.define('Client', {
   },
   cpf: {
     type: DataTypes.STRING(14),
-    allowNull: false,
-    unique: true
+    allowNull: false
+    // ❌ REMOVER: unique: true (isso estava causando os índices duplicados)
   },
   phone: {
     type: DataTypes.STRING(20),
@@ -26,7 +25,16 @@ const Client = sequelize.define('Client', {
   }
 }, {
   tableName: 'clients',
-  timestamps: true
+  timestamps: true,
+  
+  // ✅ DEFINIR ÍNDICE ÚNICO DE FORMA CONTROLADA
+  indexes: [
+    {
+      unique: true,
+      fields: ['cpf'],
+      name: 'clients_cpf_unique' // Nome fixo para evitar duplicações
+    }
+  ]
 });
 
 module.exports = Client;

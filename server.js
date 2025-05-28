@@ -33,6 +33,7 @@ app.use('/api/sales', require('./routes/saleRoutes'));
 app.use('/api/prescriptions', require('./routes/prescriptionRoutes'));
 app.use('/api/dashboard', require('./routes/dashboardRoutes'));
 app.use('/api/reports', require('./routes/reportRoutes'));
+app.use('/api/invoices', require('./routes/invoice'));
 
 // Rota padrão
 app.get('/', (req, res) => {

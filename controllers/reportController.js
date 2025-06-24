@@ -2,11 +2,12 @@ const { Product, Sale, SaleItem, sequelize } = require('../models');
 const { Op, fn, col, literal } = require('sequelize');
 
 /**
- * Relatório de Vendas Detalhado por Período e por Turno (Manhã/Tarde)
+ * Relatório de Vendas Detalhado por Período e por Turno
+ * Retorna cada venda individualmente com base no período e turno especificados.
  */
 exports.getSalesByPeriod = async (req, res) => {
   try {
-    // Adicionado 'shift' para ser lido da requisição
+    // Lendo o parâmetro 'shift' da requisição
     const { startDate, endDate, shift } = req.query;
 
     if (!startDate || !endDate) {
@@ -19,13 +20,12 @@ exports.getSalesByPeriod = async (req, res) => {
 
     // Lógica para definir o intervalo de horas com base no turno
     if (shift === 'morning') {
-      start.setHours(0, 0, 0, 0);      // De 00:00:00
-      end.setHours(11, 59, 59, 999);   // Até 11:59:59
-      // Se a data de início e fim for a mesma, mostra um rótulo mais simples
+      start.setHours(0, 0, 0, 0);      // Desde o início do dia
+      end.setHours(12, 59, 59, 999);   // Até 12:59:59 (antes das 13h)
       periodLabel = startDate === endDate ? `${start.toLocaleDateString('pt-BR')} (Manhã)` : `${periodLabel} (Manhã)`;
     } else if (shift === 'afternoon') {
-      start.setHours(12, 0, 0, 0);     // De 12:00:00
-      end.setHours(23, 59, 59, 999);   // Até 23:59:59
+      start.setHours(15, 0, 0, 0);     // A partir das 15:00:00
+      end.setHours(22, 59, 59, 999);   // Até 22:59:59 (inclui tudo feito às 22h)
       periodLabel = startDate === endDate ? `${start.toLocaleDateString('pt-BR')} (Tarde)` : `${periodLabel} (Tarde)`;
     } else { // 'full_day' ou se o turno não for especificado
       start.setHours(0, 0, 0, 0);
@@ -37,8 +37,6 @@ exports.getSalesByPeriod = async (req, res) => {
 
     const sales = await Sale.findAll({
       where: {
-        // MUDANÇA IMPORTANTE: Voltamos a usar Op.between para filtrar por hora
-        // e mantemos a coluna correta ('Sale.createdAt') para evitar ambiguidade.
         [col('Sale.createdAt')]: {
           [Op.between]: [start, end]
         },
@@ -52,7 +50,6 @@ exports.getSalesByPeriod = async (req, res) => {
       order: [[col('Sale.createdAt'), 'ASC']]
     });
 
-    // O resto da função para calcular totais e formatar a resposta continua o mesmo
     const totalSales = sales.length;
     const totalRevenue = sales.reduce((sum, sale) => sum + parseFloat(sale.totalValue), 0);
 
@@ -66,6 +63,7 @@ exports.getSalesByPeriod = async (req, res) => {
 
     const detailedReport = sales.map(sale => {
       const saleDateObj = new Date(sale.createdAt); 
+      // Usando o fuso horário de Belém para consistência
       const date = saleDateObj.toLocaleDateString('pt-BR', { timeZone: 'America/Belem' });
       const time = saleDateObj.toLocaleTimeString('pt-BR', { timeZone: 'America/Belem', hour: '2-digit', minute: '2-digit' });
 
@@ -86,10 +84,10 @@ exports.getSalesByPeriod = async (req, res) => {
         items: saleItems
       };
     });
-
+    
     res.json({
       title: 'Fechamento de Caixa',
-      period: periodLabel, // Usando o rótulo de período que agora inclui o turno
+      period: periodLabel,
       totalSales, totalRevenue, revenueByPaymentMethod,
       sales: detailedReport
     });
@@ -102,7 +100,7 @@ exports.getSalesByPeriod = async (req, res) => {
 
 /**
  * Relatório de Estoque
- * (Função inalterada)
+ * Lista todos os produtos, seu estoque atual e status (Normal ou Baixo).
  */
 exports.getStockReport = async (req, res) => {
   try {
@@ -134,7 +132,7 @@ exports.getStockReport = async (req, res) => {
 
 /**
  * Relatório de Produtos Mais Vendidos
- * (Função inalterada)
+ * Retorna um ranking dos produtos mais vendidos em um determinado período.
  */
 exports.getTopProducts = async (req, res) => {
   try {
@@ -144,8 +142,6 @@ exports.getTopProducts = async (req, res) => {
       return res.status(400).json({ message: 'Datas de início e fim são obrigatórias' });
     }
 
-    // Nota: Esta função ainda usa a coluna 'date'. Se você quiser que ela também
-    // respeite o horário da venda, precisará aplicar a mesma lógica de usar 'createdAt'.
     const start = new Date(startDate);
     start.setHours(0, 0, 0, 0);
 
@@ -154,10 +150,10 @@ exports.getTopProducts = async (req, res) => {
 
     const sales = await Sale.findAll({
       where: {
-        createdAt: { [Op.between]: [start, end] }, // Alterado para createdAt para consistência
+        createdAt: { [Op.between]: [start, end] },
         status: 'Concluída'
       },
-      include: [{model: SaleItem, as: 'SaleItems'}] // Adicionado alias para consistência
+      include: [{model: SaleItem, as: 'SaleItems'}]
     });
 
     const productSales = {};
@@ -166,8 +162,10 @@ exports.getTopProducts = async (req, res) => {
       sale.SaleItems.forEach(item => { 
         const id = item.productId.toString();
         if (!productSales[id]) {
+          // Busca o nome do produto a partir da associação, se disponível
+          const productName = item.Product ? item.Product.name : item.name;
           productSales[id] = {
-            name: item.name,
+            name: productName,
             quantity: 0,
             revenue: 0
           };

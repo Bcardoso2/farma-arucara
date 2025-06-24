@@ -2,25 +2,46 @@ const { Product, Sale, SaleItem, sequelize } = require('../models');
 const { Op, fn, col, literal } = require('sequelize');
 
 /**
- * Relatório de Vendas Detalhado por Período
- * Retorna cada venda individualmente com data, hora e itens vendidos.
+ * Relatório de Vendas Detalhado por Período e por Turno (Manhã/Tarde)
  */
 exports.getSalesByPeriod = async (req, res) => {
   try {
-    const { startDate, endDate } = req.query;
+    // Adicionado 'shift' para ser lido da requisição
+    const { startDate, endDate, shift } = req.query;
 
     if (!startDate || !endDate) {
       return res.status(400).json({ message: 'Datas de início e fim são obrigatórias' });
     }
 
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+    let periodLabel = `${start.toLocaleDateString('pt-BR')} até ${end.toLocaleDateString('pt-BR')}`;
+
+    // Lógica para definir o intervalo de horas com base no turno
+    if (shift === 'morning') {
+      start.setHours(0, 0, 0, 0);      // De 00:00:00
+      end.setHours(11, 59, 59, 999);   // Até 11:59:59
+      // Se a data de início e fim for a mesma, mostra um rótulo mais simples
+      periodLabel = startDate === endDate ? `${start.toLocaleDateString('pt-BR')} (Manhã)` : `${periodLabel} (Manhã)`;
+    } else if (shift === 'afternoon') {
+      start.setHours(12, 0, 0, 0);     // De 12:00:00
+      end.setHours(23, 59, 59, 999);   // Até 23:59:59
+      periodLabel = startDate === endDate ? `${start.toLocaleDateString('pt-BR')} (Tarde)` : `${periodLabel} (Tarde)`;
+    } else { // 'full_day' ou se o turno não for especificado
+      start.setHours(0, 0, 0, 0);
+      end.setHours(23, 59, 59, 999);
+      if (startDate === endDate) {
+        periodLabel = `${start.toLocaleDateString('pt-BR')} (Dia Inteiro)`;
+      }
+    }
+
     const sales = await Sale.findAll({
       where: {
-        // MUDANÇA: Especificando o modelo 'Sale' na coluna para remover a ambiguidade.
-        // Agora o SQL gerado será algo como WHERE DATE("Sale"."createdAt") >= ...
-        [Op.and]: [
-          sequelize.where(fn('DATE', col('Sale.createdAt')), '>=', startDate),
-          sequelize.where(fn('DATE', col('Sale.createdAt')), '<=', endDate)
-        ],
+        // MUDANÇA IMPORTANTE: Voltamos a usar Op.between para filtrar por hora
+        // e mantemos a coluna correta ('Sale.createdAt') para evitar ambiguidade.
+        [col('Sale.createdAt')]: {
+          [Op.between]: [start, end]
+        },
         status: 'Concluída'
       },
       include: [{
@@ -28,12 +49,10 @@ exports.getSalesByPeriod = async (req, res) => {
         as: 'SaleItems',
         include: [Product]
       }],
-      // MUDANÇA: Também especificamos a coluna na ordenação para garantir.
       order: [[col('Sale.createdAt'), 'ASC']]
     });
 
-    // --- O resto da função permanece exatamente o mesmo ---
-
+    // O resto da função para calcular totais e formatar a resposta continua o mesmo
     const totalSales = sales.length;
     const totalRevenue = sales.reduce((sum, sale) => sum + parseFloat(sale.totalValue), 0);
 
@@ -67,13 +86,10 @@ exports.getSalesByPeriod = async (req, res) => {
         items: saleItems
       };
     });
-    
-    const periodStart = new Date(startDate + 'T00:00:00');
-    const periodEnd = new Date(endDate + 'T00:00:00');
 
     res.json({
-      title: 'Fechamento de Caixa por Período',
-      period: `${periodStart.toLocaleDateString('pt-BR')} até ${periodEnd.toLocaleDateString('pt-BR')}`,
+      title: 'Fechamento de Caixa',
+      period: periodLabel, // Usando o rótulo de período que agora inclui o turno
       totalSales, totalRevenue, revenueByPaymentMethod,
       sales: detailedReport
     });
@@ -83,9 +99,10 @@ exports.getSalesByPeriod = async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 };
+
 /**
  * Relatório de Estoque
- * Lista todos os produtos, seu estoque atual e status (Normal ou Baixo).
+ * (Função inalterada)
  */
 exports.getStockReport = async (req, res) => {
   try {
@@ -117,7 +134,7 @@ exports.getStockReport = async (req, res) => {
 
 /**
  * Relatório de Produtos Mais Vendidos
- * Retorna um ranking dos produtos mais vendidos em um determinado período.
+ * (Função inalterada)
  */
 exports.getTopProducts = async (req, res) => {
   try {
@@ -127,6 +144,8 @@ exports.getTopProducts = async (req, res) => {
       return res.status(400).json({ message: 'Datas de início e fim são obrigatórias' });
     }
 
+    // Nota: Esta função ainda usa a coluna 'date'. Se você quiser que ela também
+    // respeite o horário da venda, precisará aplicar a mesma lógica de usar 'createdAt'.
     const start = new Date(startDate);
     start.setHours(0, 0, 0, 0);
 
@@ -135,16 +154,15 @@ exports.getTopProducts = async (req, res) => {
 
     const sales = await Sale.findAll({
       where: {
-        date: { [Op.between]: [start, end] },
+        createdAt: { [Op.between]: [start, end] }, // Alterado para createdAt para consistência
         status: 'Concluída'
       },
-      include: [SaleItem]
+      include: [{model: SaleItem, as: 'SaleItems'}] // Adicionado alias para consistência
     });
 
     const productSales = {};
 
     sales.forEach(sale => {
-      // Sequelize usa 'SaleItems' como padrão se 'as' não for especificado na associação
       sale.SaleItems.forEach(item => { 
         const id = item.productId.toString();
         if (!productSales[id]) {

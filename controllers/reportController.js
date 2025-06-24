@@ -2,11 +2,12 @@ const { Product, Sale, SaleItem, sequelize } = require('../models');
 const { Op, fn, col, literal } = require('sequelize');
 
 /**
- * Relatório de Vendas (Fechamento de Caixa) por Período e Turno
+ * Relatório de Vendas (Fechamento de Caixa) por Período e Horário Manual
  */
 exports.getSalesByPeriod = async (req, res) => {
   try {
-    const { startDate, endDate, shift } = req.query;
+    // MUDANÇA: Lendo startTime e endTime em vez de shift
+    const { startDate, endDate, startTime, endTime } = req.query;
 
     if (!startDate || !endDate) {
       return res.status(400).json({ message: 'Datas de início e fim são obrigatórias' });
@@ -16,25 +17,28 @@ exports.getSalesByPeriod = async (req, res) => {
     const end = new Date(endDate);
     let periodLabel = `${start.toLocaleDateString('pt-BR')} até ${end.toLocaleDateString('pt-BR')}`;
 
-    if (shift === 'morning') {
-      start.setHours(0, 0, 0, 0);
-      end.setHours(12, 59, 59, 999); // Manhã (até 13h)
-      periodLabel = startDate === endDate ? `${start.toLocaleDateString('pt-BR')} (Manhã)` : `${periodLabel} (Manhã)`;
-    } else if (shift === 'afternoon') {
-      start.setHours(15, 0, 0, 0);
-      end.setHours(22, 59, 59, 999); // Tarde (das 15h às 22h)
-      periodLabel = startDate === endDate ? `${start.toLocaleDateString('pt-BR')} (Tarde)` : `${periodLabel} (Tarde)`;
-    } else { // 'full_day' ou se o turno não for especificado
-      start.setHours(0, 0, 0, 0);
-      end.setHours(23, 59, 59, 999);
+    // Define as horas com base nos parâmetros recebidos ou usa o dia inteiro como padrão
+    const startHours = startTime ? parseInt(startTime.split(':')[0]) : 0;
+    const startMinutes = startTime ? parseInt(startTime.split(':')[1]) : 0;
+
+    const endHours = endTime ? parseInt(endTime.split(':')[0]) : 23;
+    const endMinutes = endTime ? parseInt(endTime.split(':')[1]) : 59;
+    
+    start.setHours(startHours, startMinutes, 0, 0);
+    end.setHours(endHours, endMinutes, 59, 999);
+
+    // Ajusta o rótulo do período se um horário específico for usado
+    if (startTime && endTime) {
       if (startDate === endDate) {
-        periodLabel = `${start.toLocaleDateString('pt-BR')} (Dia Inteiro)`;
+        periodLabel = `${start.toLocaleDateString('pt-BR')} (de ${startTime} até ${endTime})`;
+      } else {
+        periodLabel += ` (de ${startTime} até ${endTime})`;
       }
     }
-
+    
     const sales = await Sale.findAll({
       where: {
-        // CORREÇÃO DEFINITIVA: Usando a sintaxe '$Sale.createdAt$' para especificar a coluna sem ambiguidade.
+        // Esta cláusula já está correta e funcionará com os novos horários
         '$Sale.createdAt$': {
           [Op.between]: [start, end]
         },
@@ -98,6 +102,7 @@ exports.getSalesByPeriod = async (req, res) => {
 
 /**
  * Relatório de Estoque
+ * (Função inalterada)
  */
 exports.getStockReport = async (req, res) => {
   try {
@@ -129,6 +134,7 @@ exports.getStockReport = async (req, res) => {
 
 /**
  * Relatório de Produtos Mais Vendidos
+ * (Função inalterada)
  */
 exports.getTopProducts = async (req, res) => {
   try {
@@ -146,7 +152,7 @@ exports.getTopProducts = async (req, res) => {
 
     const sales = await Sale.findAll({
       where: {
-        createdAt: { [Op.between]: [start, end] }, // Usando createdAt para consistência
+        createdAt: { [Op.between]: [start, end] },
         status: 'Concluída'
       },
       include: [{model: SaleItem, as: 'SaleItems'}]

@@ -2,12 +2,10 @@ const { Product, Sale, SaleItem, sequelize } = require('../models');
 const { Op, fn, col, literal } = require('sequelize');
 
 /**
- * Relatório de Vendas Detalhado por Período e por Turno
- * Retorna cada venda individualmente com base no período e turno especificados.
+ * Relatório de Vendas (Fechamento de Caixa) por Período e Turno
  */
 exports.getSalesByPeriod = async (req, res) => {
   try {
-    // Lendo o parâmetro 'shift' da requisição
     const { startDate, endDate, shift } = req.query;
 
     if (!startDate || !endDate) {
@@ -18,14 +16,13 @@ exports.getSalesByPeriod = async (req, res) => {
     const end = new Date(endDate);
     let periodLabel = `${start.toLocaleDateString('pt-BR')} até ${end.toLocaleDateString('pt-BR')}`;
 
-    // Lógica para definir o intervalo de horas com base no turno
     if (shift === 'morning') {
-      start.setHours(0, 0, 0, 0);      // Desde o início do dia
-      end.setHours(12, 59, 59, 999);   // Até 12:59:59 (antes das 13h)
+      start.setHours(0, 0, 0, 0);
+      end.setHours(12, 59, 59, 999); // Manhã (até 13h)
       periodLabel = startDate === endDate ? `${start.toLocaleDateString('pt-BR')} (Manhã)` : `${periodLabel} (Manhã)`;
     } else if (shift === 'afternoon') {
-      start.setHours(15, 0, 0, 0);     // A partir das 15:00:00
-      end.setHours(22, 59, 59, 999);   // Até 22:59:59 (inclui tudo feito às 22h)
+      start.setHours(15, 0, 0, 0);
+      end.setHours(22, 59, 59, 999); // Tarde (das 15h às 22h)
       periodLabel = startDate === endDate ? `${start.toLocaleDateString('pt-BR')} (Tarde)` : `${periodLabel} (Tarde)`;
     } else { // 'full_day' ou se o turno não for especificado
       start.setHours(0, 0, 0, 0);
@@ -37,7 +34,8 @@ exports.getSalesByPeriod = async (req, res) => {
 
     const sales = await Sale.findAll({
       where: {
-        [col('Sale.createdAt')]: {
+        // CORREÇÃO DEFINITIVA: Usando a sintaxe '$Sale.createdAt$' para especificar a coluna sem ambiguidade.
+        '$Sale.createdAt$': {
           [Op.between]: [start, end]
         },
         status: 'Concluída'
@@ -47,7 +45,7 @@ exports.getSalesByPeriod = async (req, res) => {
         as: 'SaleItems',
         include: [Product]
       }],
-      order: [[col('Sale.createdAt'), 'ASC']]
+      order: [['createdAt', 'ASC']]
     });
 
     const totalSales = sales.length;
@@ -63,7 +61,6 @@ exports.getSalesByPeriod = async (req, res) => {
 
     const detailedReport = sales.map(sale => {
       const saleDateObj = new Date(sale.createdAt); 
-      // Usando o fuso horário de Belém para consistência
       const date = saleDateObj.toLocaleDateString('pt-BR', { timeZone: 'America/Belem' });
       const time = saleDateObj.toLocaleTimeString('pt-BR', { timeZone: 'America/Belem', hour: '2-digit', minute: '2-digit' });
 
@@ -98,9 +95,9 @@ exports.getSalesByPeriod = async (req, res) => {
   }
 };
 
+
 /**
  * Relatório de Estoque
- * Lista todos os produtos, seu estoque atual e status (Normal ou Baixo).
  */
 exports.getStockReport = async (req, res) => {
   try {
@@ -132,7 +129,6 @@ exports.getStockReport = async (req, res) => {
 
 /**
  * Relatório de Produtos Mais Vendidos
- * Retorna um ranking dos produtos mais vendidos em um determinado período.
  */
 exports.getTopProducts = async (req, res) => {
   try {
@@ -150,7 +146,7 @@ exports.getTopProducts = async (req, res) => {
 
     const sales = await Sale.findAll({
       where: {
-        createdAt: { [Op.between]: [start, end] },
+        createdAt: { [Op.between]: [start, end] }, // Usando createdAt para consistência
         status: 'Concluída'
       },
       include: [{model: SaleItem, as: 'SaleItems'}]
@@ -162,10 +158,8 @@ exports.getTopProducts = async (req, res) => {
       sale.SaleItems.forEach(item => { 
         const id = item.productId.toString();
         if (!productSales[id]) {
-          // Busca o nome do produto a partir da associação, se disponível
-          const productName = item.Product ? item.Product.name : item.name;
           productSales[id] = {
-            name: productName,
+            name: item.name,
             quantity: 0,
             revenue: 0
           };
